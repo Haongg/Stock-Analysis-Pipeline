@@ -41,6 +41,8 @@ htmlcov/
 # MLflow artefacts (tracked via Docker volume; no need in git)
 mlruns/
 mlflow-artifacts/
+mlflow.db
+*.db
 
 # Notebooks checkpoints
 .ipynb_checkpoints/

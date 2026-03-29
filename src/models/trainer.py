@@ -1,35 +1,28 @@
 """
-Model training module.
+models/trainer.py
 
-Trains a Random Forest regressor to predict the next-day closing price.
-All hyperparameters and metrics are logged to MLflow for experiment tracking
-and model versioning.
+Responsibility: train the stock-price prediction model and log everything
+to MLflow (parameters, metrics, model artifact, model alias).
 
-Follows Dependency Inversion Principle: the Trainer depends on abstract
-interfaces (DataFrames, config dicts) rather than concrete data sources.
+Model: Random Forest regressor (next-day close price target).
 """
 
 from __future__ import annotations
 
-import logging
-import os
 from typing import Any, Dict, Optional, Tuple
 
-import mlflow
-import mlflow.sklearn
-from mlflow.tracking import MlflowClient
-import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 
-logger = logging.getLogger(__name__)
+# Feature columns expected in the input DataFrame
+FEATURE_COLS = [
+    "open", "high", "low", "volume",
+    "sma_10", "sma_20", "sma_50", "ema_20",
+    "rsi", "macd", "macd_signal", "macd_hist",
+    "volatility", "close_lag_1", "close_lag_5", "daily_return",
+]
+TARGET_COL = "close"
 
-# ---------------------------------------------------------------------------
-# Default hyperparameters
-# ---------------------------------------------------------------------------
 DEFAULT_PARAMS: Dict[str, Any] = {
     "n_estimators": 100,
     "max_depth": 10,
@@ -38,29 +31,9 @@ DEFAULT_PARAMS: Dict[str, Any] = {
     "random_state": 42,
 }
 
-FEATURE_COLS = [
-    "open",
-    "high",
-    "low",
-    "volume",
-    "sma_10",
-    "sma_20",
-    "sma_50",
-    "ema_20",
-    "rsi",
-    "macd",
-    "macd_signal",
-    "macd_hist",
-    "volatility",
-    "close_lag_1",
-    "close_lag_5",
-    "daily_return",
-]
-TARGET_COL = "close"
-
 
 class StockModelTrainer:
-    """Encapsulates the training loop for the stock-price prediction model."""
+    """Trains and registers a Random Forest model via MLflow."""
 
     def __init__(
         self,
@@ -68,122 +41,27 @@ class StockModelTrainer:
         mlflow_tracking_uri: Optional[str] = None,
         experiment_name: str = "stock_analysis",
     ) -> None:
-        self._params = params or DEFAULT_PARAMS.copy()
-        self._experiment_name = experiment_name
-        self._scaler = StandardScaler()
+        self.params = params or DEFAULT_PARAMS.copy()
+        self.mlflow_tracking_uri = mlflow_tracking_uri
+        self.experiment_name = experiment_name
 
-        uri = mlflow_tracking_uri or os.getenv(
-            "MLFLOW_TRACKING_URI", "http://mlflow:5000"
-        )
-        mlflow.set_tracking_uri(uri)
-        mlflow.set_experiment(experiment_name)
-        logger.info("MLflow tracking URI: %s  experiment: %s", uri, experiment_name)
+    def train(
+        self, df: pd.DataFrame
+    ) -> Tuple[RandomForestRegressor, Dict[str, float]]:
+        """Train the model on *df*, log to MLflow, return (model, metrics).
 
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
-
-    def train(self, df: pd.DataFrame) -> Tuple[RandomForestRegressor, Dict[str, float]]:
-        """Train the model on *df* and log everything to MLflow.
-
-        Parameters
-        ----------
-        df:
-            Feature-engineered DataFrame produced by
-            :class:`~src.features.feature_engineering.FeatureEngineer`.
-
-        Returns
-        -------
-        Tuple[RandomForestRegressor, Dict[str, float]]
-            Fitted model and a metrics dictionary
-            (``rmse``, ``mae``, ``r2``).
+        Metrics logged: rmse, mae, r2.
+        The registered model version receives the ``champion`` alias.
         """
-        X, y = self._prepare_data(df)
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, shuffle=False
-        )
-
-        X_train_scaled = self._scaler.fit_transform(X_train)
-        X_test_scaled = self._scaler.transform(X_test)
-
-        with mlflow.start_run() as run:
-            logger.info("MLflow run id: %s", run.info.run_id)
-
-            # Log hyper-parameters
-            mlflow.log_params(self._params)
-            mlflow.log_param("train_rows", len(X_train))
-            mlflow.log_param("test_rows", len(X_test))
-            mlflow.log_param("features", FEATURE_COLS)
-
-            model = RandomForestRegressor(**self._params)
-            model.fit(X_train_scaled, y_train)
-
-            y_pred = model.predict(X_test_scaled)
-            metrics = self._compute_metrics(y_test, y_pred)
-
-            mlflow.log_metrics(metrics)
-
-            # Log feature importance as a metric per feature
-            for feat, imp in zip(FEATURE_COLS, model.feature_importances_):
-                mlflow.log_metric(f"importance_{feat}", float(imp))
-
-            model_info = mlflow.sklearn.log_model(
-                model,
-                artifact_path="random_forest",
-                registered_model_name="stock_price_predictor",
-            )
-
-            # MLflow 3.x uses aliases instead of deprecated stages.
-            # Mark this version as "champion" so the API can load it via
-            # models:/stock_price_predictor@champion.
-            if model_info.registered_model_version:
-                client = MlflowClient()
-                client.set_registered_model_alias(
-                    name="stock_price_predictor",
-                    alias="champion",
-                    version=model_info.registered_model_version,
-                )
-                logger.info(
-                    "Set alias 'champion' on model version %s",
-                    model_info.registered_model_version,
-                )
-
-            logger.info(
-                "Training complete – RMSE: %.4f  MAE: %.4f  R²: %.4f",
-                metrics["rmse"],
-                metrics["mae"],
-                metrics["r2"],
-            )
-
-        return model, metrics
-
-    def get_scaler(self) -> StandardScaler:
-        """Return the fitted scaler (available after :meth:`train` is called)."""
-        return self._scaler
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
+        raise NotImplementedError
 
     def _prepare_data(
         self, df: pd.DataFrame
     ) -> Tuple[pd.DataFrame, pd.Series]:
-        available = [c for c in FEATURE_COLS if c in df.columns]
-        missing = set(FEATURE_COLS) - set(available)
-        if missing:
-            logger.warning("Missing feature columns: %s", missing)
-
-        X = df[available].copy()
-        # Target: next-day close price
-        y = df[TARGET_COL].shift(-1).dropna()
-        X = X.iloc[: len(y)]
-        return X, y
+        """Split *df* into feature matrix X and next-day close target y."""
+        raise NotImplementedError
 
     @staticmethod
-    def _compute_metrics(
-        y_true: np.ndarray, y_pred: np.ndarray
-    ) -> Dict[str, float]:
-        rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
-        mae = float(mean_absolute_error(y_true, y_pred))
-        r2 = float(r2_score(y_true, y_pred))
-        return {"rmse": rmse, "mae": mae, "r2": r2}
+    def _compute_metrics(y_true, y_pred) -> Dict[str, float]:
+        """Return dict with keys ``rmse``, ``mae``, ``r2``."""
+        raise NotImplementedError
