@@ -1,0 +1,51 @@
+# ============================================================
+# .gitignore – Stock Analysis Pipeline
+# ============================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Environment secrets
+.env
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+*.log
+
+# MLflow artefacts (tracked via Docker volume; no need in git)
+mlruns/
+mlflow-artifacts/
+mlflow.db
+*.db
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store

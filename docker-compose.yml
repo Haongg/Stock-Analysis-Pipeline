@@ -1,0 +1,102 @@
+version: "3.9"
+
+services:
+  # -------------------------------------------------------
+  # PostgreSQL – primary data store
+  # -------------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stockuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-stockdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stockuser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # -------------------------------------------------------
+  # MLflow tracking server
+  # -------------------------------------------------------
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.10.1
+    restart: unless-stopped
+    command: >
+      mlflow server
+        --backend-store-uri postgresql://${POSTGRES_USER:-stockuser}:${POSTGRES_PASSWORD:-stockpassword}@db:5432/${POSTGRES_DB:-stockdb}
+        --default-artifact-root /mlflow/artifacts
+        --host 0.0.0.0
+        --port 5000
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    ports:
+      - "5000:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # -------------------------------------------------------
+  # FastAPI prediction service
+  # -------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockuser}:${POSTGRES_PASSWORD:-stockpassword}@db:5432/${POSTGRES_DB:-stockdb}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODEL_NAME: ${MODEL_NAME:-stock_price_predictor}
+      MODEL_STAGE: ${MODEL_STAGE:-latest}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # -------------------------------------------------------
+  # One-off training job (run with: docker compose run trainer)
+  # -------------------------------------------------------
+  trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: >
+      python scripts/train.py
+        --tickers ${TRAIN_TICKERS:-AAPL MSFT GOOG}
+        --start ${TRAIN_START:-2020-01-01}
+        --n-estimators ${RF_N_ESTIMATORS:-100}
+        --max-depth ${RF_MAX_DEPTH:-10}
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockuser}:${POSTGRES_PASSWORD:-stockpassword}@db:5432/${POSTGRES_DB:-stockdb}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    depends_on:
+      db:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    profiles:
+      - training
+
+volumes:
+  postgres_data:
+  mlflow_artifacts:
