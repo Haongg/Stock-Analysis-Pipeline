@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import mlflow
 import mlflow.sklearn
+from mlflow.tracking import MlflowClient
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
@@ -126,11 +127,26 @@ class StockModelTrainer:
             for feat, imp in zip(FEATURE_COLS, model.feature_importances_):
                 mlflow.log_metric(f"importance_{feat}", float(imp))
 
-            mlflow.sklearn.log_model(
+            model_info = mlflow.sklearn.log_model(
                 model,
                 artifact_path="random_forest",
                 registered_model_name="stock_price_predictor",
             )
+
+            # MLflow 3.x uses aliases instead of deprecated stages.
+            # Mark this version as "champion" so the API can load it via
+            # models:/stock_price_predictor@champion.
+            if model_info.registered_model_version:
+                client = MlflowClient()
+                client.set_registered_model_alias(
+                    name="stock_price_predictor",
+                    alias="champion",
+                    version=model_info.registered_model_version,
+                )
+                logger.info(
+                    "Set alias 'champion' on model version %s",
+                    model_info.registered_model_version,
+                )
 
             logger.info(
                 "Training complete – RMSE: %.4f  MAE: %.4f  R²: %.4f",

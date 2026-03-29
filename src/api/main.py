@@ -79,7 +79,13 @@ class PredictionService:
         model_stage = os.getenv("MODEL_STAGE", "latest")
 
         mlflow.set_tracking_uri(tracking_uri)
-        model_uri = f"models:/{model_name}/{model_stage}"
+
+        # Support both version/stage form ("1", "latest") and alias form
+        # ("@champion") introduced in MLflow 3.x.
+        if model_stage.startswith("@"):
+            model_uri = f"models:/{model_name}{model_stage}"
+        else:
+            model_uri = f"models:/{model_name}/{model_stage}"
 
         logger.info("Loading model from %s", model_uri)
         try:
