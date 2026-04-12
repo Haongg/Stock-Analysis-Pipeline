@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # -------------------------------------------------------
   # PostgreSQL – primary data store
@@ -20,6 +18,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    profiles: ["core"]
 
   # -------------------------------------------------------
   # MLflow tracking server
@@ -42,6 +41,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    profiles: ["core"]
 
   # -------------------------------------------------------
   # FastAPI prediction service
@@ -71,6 +71,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
+    profiles: ["core"]
 
   # -------------------------------------------------------
   # One-off training job (run with: docker compose run trainer)
@@ -97,6 +98,257 @@ services:
     profiles:
       - training
 
+  # -------------------------------------------------------
+  # Kafka KRaft cluster (3 broker+controller nodes, no ZooKeeper)
+  # -------------------------------------------------------
+  kafka-1:
+    image: apache/kafka:latest
+    restart: unless-stopped
+    environment:
+      KAFKA_KRAFT_CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"  # can be added to env file
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:19092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-1:9092,EXTERNAL://localhost:19092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3   # number of replicas for the offsets topic
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3  # number of replicas for the transaction state log
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2  # minimum number of replicas that must be in sync for a transaction to be considered stable
+      KAFKA_MIN_INSYNC_REPLICAS: 2  # minimum number of replicas that must be in sync for a topic to be considered stable
+    ports:
+      - "19092:19092"
+    volumes:
+      - kafka_1_data:/var/lib/kafka/data
+    profiles: ["kafka"]
+
+  kafka-2:
+    image: apache/kafka:latest
+    restart: unless-stopped
+    environment:
+      KAFKA_KRAFT_CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-2:9092,EXTERNAL://localhost:29092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+    ports:
+      - "29092:29092"
+    volumes:
+      - kafka_2_data:/var/lib/kafka/data
+    profiles: ["kafka"]
+
+  kafka-3:
+    image: apache/kafka:latest
+    restart: unless-stopped
+    environment:
+      KAFKA_KRAFT_CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:39092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-3:9092,EXTERNAL://localhost:39092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+    ports:
+      - "39092:39092"
+    volumes:
+      - kafka_3_data:/var/lib/kafka/data
+    profiles: ["kafka"]
+
+  # -------------------------------------------------------
+  # Kafka one-off service to init topic 
+  # -------------------------------------------------------
+  kafka-init:
+    image: apache/kafka:latest
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    restart: "no"
+    command: 
+      - /bin/bash
+      - -c
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9092 --create --if-not-exists --topic stock.raw.ohlcv --partitions 6 --replication-factor 3 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9092 --describe --topic stock.raw.ohlcv
+    profiles: ["kafka"]  
+  
+  # -------------------------------------------------------
+  # One-off Yahoo -> Kafka ingestion job
+  # (run with: docker compose run --rm ingestor)
+  # -------------------------------------------------------
+  ingestor:
+    image: my-custom-python-app:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: >
+      python scripts/ingest_to_kafka.py
+        --tickers ${TRAIN_TICKERS:-AAPL MSFT}
+        --start ${TRAIN_START:-2026-01-01}
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka-1:9092,kafka-2:9092,kafka-3:9092}
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-stock.raw.ohlcv}
+      KAFKA_CLIENT_ID: ${KAFKA_CLIENT_ID:-stock-producer}
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+      - kafka-init
+    profiles:
+      - ingestion
+
+  # -------------------------------------------------------
+  # Streaming Yahoo -> Kafka ingestion service
+  # (run with: docker compose --profile streaming up ingestor-streaming)
+  # -------------------------------------------------------
+  ingestor-streaming:
+    image: my-custom-python-app:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: >
+      python scripts/ingest_to_kafka_streaming.py
+        --tickers ${STREAM_TICKERS:-AAPL MSFT}
+        --interval ${STREAM_INTERVAL:-300}
+    restart: unless-stopped
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka-1:9092,kafka-2:9092,kafka-3:9092}
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-stock.raw.ohlcv}
+      KAFKA_CLIENT_ID: ${KAFKA_CLIENT_ID:-stock-streaming-producer}
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+      - kafka-init
+    profiles:
+      - streaming
+
+  # -------------------------------------------------------
+  # Elasticsearch cluster (1 node) + Kibana for monitoring
+  # (note: for basic setup, security features are disabled)
+  # -------------------------------------------------------
+  es01:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: es01
+    restart: unless-stopped
+    environment:
+      - node.name=es01
+      - cluster.name=es-financial-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - xpack.security.enabled=false
+      - xpack.watcher.enabled=false
+      - xpack.ml.enabled=false
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - es_data01:/usr/share/elasticsearch/data
+    ports:
+      - 9200:9200
+    profiles: ["elasticsearch"]
+
+  # -------------------------------------------------------
+  # Elasticsearch index initialization one-off service
+  # -------------------------------------------------------
+  es-init:
+    image: my-custom-python-app:latest
+    command: python src/elasticsearch/init_indices.py
+    restart: "no"
+    environment:
+      ES_HOST: es01
+      ES_PORT: 9200
+    depends_on:
+      es01:
+        condition: service_healthy
+    profiles: ["indices"]
+
+  # ----------------------------------------------------------------
+  # Kibana for monitoring and visualizing data from Elasticsearch
+  # ----------------------------------------------------------------
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://es01:9200
+    ports:
+      - 5601:5601
+    mem_limit: 1G
+    profiles: ["elasticsearch"]
+  
+  # -------------------------------------------------------------------
+  # Fink cluster in application mode (1 JobManager + 1 TaskManager)
+  # Each cluster is used for one Flink job only, create more if needed
+  # -------------------------------------------------------------------
+  stock-jobmanager:
+    image: my-flink-python-app:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.flink
+    restart: unless-stopped
+    ports:
+      - "8081:8081" # Flink Web UI
+    command: >
+      standalone-job
+      --python /opt/flink/usrlib/python_code/main.py
+    volumes:
+      - ./src/flink:/opt/flink/usrlib/python_code       # Mount file .py
+      - ./models:/opt/flink/usrlib/models         # Mount file .pkl, .h5
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: stock-jobmanager
+        parallelism.default: 2
+    profiles: ["flink"]
+
+  stock-taskmanager:
+    image: my-flink-python-app:latest
+    restart: unless-stopped
+    depends_on:
+      - stock-jobmanager
+    command: taskmanager
+    volumes:
+      - ./src/flink:/opt/flink/usrlib/python_code
+      - ./models:/opt/flink/usrlib/models
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: stock-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+    profiles: ["flink"]
+
 volumes:
   postgres_data:
   mlflow_artifacts:
+  kafka_1_data:
+  kafka_2_data:
+  kafka_3_data:
+  es_data01:
