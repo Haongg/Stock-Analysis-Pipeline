@@ -3,7 +3,7 @@
 # ============================================================
 
 # --- Data & ML ---
-yfinance==0.2.40
+yfinance==1.2.1
 pandas==2.2.2
 numpy==1.26.4
 scikit-learn==1.5.0
@@ -27,3 +27,10 @@ httpx==0.27.0
 
 # --- Dev utilities ---
 python-dotenv==1.0.1
+schedule==1.2.2
+
+# --- Kafka ---
+kafka-python==2.3.0
+
+# --- Elasticsearch ---
+elasticsearch==8.11.0
