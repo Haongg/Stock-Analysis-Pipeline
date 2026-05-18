@@ -345,8 +345,121 @@ services:
         taskmanager.numberOfTaskSlots: 2
     profiles: ["flink"]
 
+  # -------------------------------------------------------
+  # Airflow metadata database (dedicated Postgres instance)
+  # -------------------------------------------------------
+  airflow-db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER:-airflow}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME:-airflow}
+    volumes:
+      - airflow_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER:-airflow} -d ${AIRFLOW_DB_NAME:-airflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["airflow"]
+
+  # -------------------------------------------------------
+  # Airflow initialization (db migrate + admin + connections)
+  # -------------------------------------------------------
+  airflow-init:
+    image: apache/airflow:2.8.4-python3.11
+    user: "${AIRFLOW_UID:-50000}:0"
+    restart: "no"
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@airflow-db:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "False"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-elasticsearch apache-airflow-providers-docker apache-airflow-providers-postgres elasticsearch==8.11.0 pandas==2.2.2 pyarrow>=14 numpy==1.26.4 scikit-learn==1.5.0 joblib==1.4.2
+      AIRFLOW_CONN_ELASTICSEARCH_DEFAULT: ${AIRFLOW_CONN_ELASTICSEARCH_DEFAULT:-http://es01:9200}
+      AIRFLOW_CONN_POSTGRES_DEFAULT: ${AIRFLOW_CONN_POSTGRES_DEFAULT:-postgresql://stockuser:changeme@db:5432/stockdb}
+      AIRFLOW_CONN_MLFLOW_DEFAULT: ${AIRFLOW_CONN_MLFLOW_DEFAULT:-http://mlflow:5000}
+      AIRFLOW_CONN_FLINK_DEFAULT: ${AIRFLOW_CONN_FLINK_DEFAULT:-http://stock-jobmanager:8081}
+    command: >
+      bash -c "
+      airflow db migrate &&
+      airflow users create --username ${AIRFLOW_ADMIN_USERNAME:-admin} --password ${AIRFLOW_ADMIN_PASSWORD:-admin} --firstname Airflow --lastname Admin --role Admin --email ${AIRFLOW_ADMIN_EMAIL:-admin@example.com} &&
+      bash /opt/airflow/scripts/init_airflow_connections.sh
+      "
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+    profiles: ["airflow"]
+
+  # -------------------------------------------------------
+  # Airflow webserver
+  # -------------------------------------------------------
+  airflow-webserver:
+    image: apache/airflow:2.8.4-python3.11
+    user: "${AIRFLOW_UID:-50000}:0"
+    restart: unless-stopped
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: webserver
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@airflow-db:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "False"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-elasticsearch apache-airflow-providers-docker apache-airflow-providers-postgres elasticsearch==8.11.0 pandas==2.2.2 pyarrow>=14 numpy==1.26.4 scikit-learn==1.5.0 joblib==1.4.2
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+    ports:
+      - "8080:8080"
+    profiles: ["airflow"]
+
+  # -------------------------------------------------------
+  # Airflow scheduler
+  # -------------------------------------------------------
+  airflow-scheduler:
+    image: apache/airflow:2.8.4-python3.11
+    user: "${AIRFLOW_UID:-50000}:0"
+    restart: unless-stopped
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: scheduler
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@airflow-db:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "False"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-elasticsearch apache-airflow-providers-docker apache-airflow-providers-postgres elasticsearch==8.11.0 pandas==2.2.2 pyarrow>=14 numpy==1.26.4 scikit-learn==1.5.0 joblib==1.4.2
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+    profiles: ["airflow"]
+
 volumes:
   postgres_data:
+  airflow_db_data:
   mlflow_artifacts:
   kafka_1_data:
   kafka_2_data:
