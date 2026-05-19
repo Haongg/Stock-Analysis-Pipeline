@@ -49,3 +49,5 @@ mlflow.db
 
 # macOS
 .DS_Store
+
+*.md

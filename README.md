@@ -71,6 +71,9 @@ Stock-Analysis-Pipeline/
 
 ## Quick Start
 
+For a full Docker startup order plus read-only smoke checks, see [End-to-End Docker Startup Checklist](docs/end_to_end_startup_checklist.md).
+Task `8.3` validates service startup and observability paths; real LSTM training/model promotion still depends on pending tasks `2.4-2.9`, so Flink may emit `model_not_loaded` prediction records until ONNX/scaler artifacts exist.
+
 ### 1. Copy environment template
 
 ```bash
@@ -119,6 +122,8 @@ docker compose --profile flink up -d
 
 This creates:
 - **Flink** on ports `8081`
+
+For Application Mode build/start validation and submitted-job checks, see [Flink Application Mode Runbook](docs/flink_application_mode_runbook.md).
 
 > [!IMPORTANT:]
 > **Put all python files into src\flink\ and trained models (.plk, .h5,...) in to models\ (if needed)** 
