@@ -1,0 +1,37 @@
+{
+  "model_type": "ImprovedLSTMRegressor",
+  "n_features": 17,
+  "feature_columns": [
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Volume",
+    "SMA10",
+    "SMA20",
+    "SMA50",
+    "EMA20",
+    "RSI_14",
+    "MACD",
+    "Signal_Line",
+    "Histogram",
+    "Daily_Return",
+    "Rolling_Volatility",
+    "Close_lag_1",
+    "Close_lag_5"
+  ],
+  "hidden_size": 128,
+  "num_layers": 3,
+  "dropout_rate": 0.3,
+  "lookback": 90,
+  "learning_rate": 0.0005,
+  "weight_decay": 1e-05,
+  "batch_size": 32,
+  "scaler_type": "RobustScaler",
+  "metrics": {
+    "mae": 89.02262115478516,
+    "rmse": 94.30829620361328,
+    "mape": 38.590599060058594,
+    "r2": -7.949027061462402
+  }
+}
