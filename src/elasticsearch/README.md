@@ -63,9 +63,28 @@ Set these environment variables for Elasticsearch connection:
 ```bash
 export ES_HOST=localhost
 export ES_PORT=9200
+export ES_SCHEME=http
 # export ES_USER=elastic
 # export ES_PASSWORD=changeme
+export ES_BULK_BATCH_SIZE=100
+export ES_BULK_FLUSH_INTERVAL_SECONDS=5
+export ES_REQUEST_TIMEOUT_SECONDS=30
+export ES_CORE_POOL_SIZE=4
+export ES_MAX_POOL_SIZE=8
+export ES_HTTP_COMPRESS=true
+export ES_CLUSTER_HEALTH_TIMEOUT_SECONDS=5
+export ES_FEATURE_INDEX=stock-engineered-features
+export ES_PREDICTION_INDEX=stock-predictions
+export ES_ILM_ENABLED=true
+export ES_ILM_POLICY_NAME=stock-analysis-90d-policy
+export ES_INDEX_RETENTION_DAYS=90
+export ES_DAILY_INDEX_ENABLED=true
 ```
+
+When daily indexing is enabled, feature and prediction documents are written to
+date-suffixed indices such as `stock-engineered-features-2025-01-15` and
+`stock-predictions-2025-01-15`. The initialization script installs the ILM
+policy and matching index templates for those patterns.
 
 ### Integration with Pipeline
 
@@ -82,3 +101,26 @@ Use Kibana to create visualizations:
 - Technical indicator overlays
 - Prediction accuracy comparisons
 - Volume analysis
+
+### Sink Validation
+
+Run local unit/static checks without Elasticsearch:
+
+```bash
+python3 -m py_compile src/flink/es_sink.py tests/test_es_sink.py tests/test_es_sink_integration.py scripts/validate_es_sink.py scripts/benchmark_es_sink.py
+python3 -m pytest -q tests/test_es_sink.py
+```
+
+Run the real Elasticsearch smoke test when the local cluster is available:
+
+```bash
+docker compose --profile elasticsearch up -d
+python3 src/elasticsearch/init_indices.py
+ES_INTEGRATION_TEST=1 python3 -m pytest -q tests/test_es_sink_integration.py
+python3 scripts/validate_es_sink.py
+python3 scripts/benchmark_es_sink.py --events 1000
+```
+
+For Kibana verification, create data views for `stock-engineered-features-*`
+and `stock-predictions-*`, then filter for ticker `ESVALID` after running the
+smoke validation script.

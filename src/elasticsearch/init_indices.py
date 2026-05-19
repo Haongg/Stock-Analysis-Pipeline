@@ -1,57 +1,55 @@
+from __future__ import annotations
+
 import json
-import os
-from elasticsearch import Elasticsearch
+import sys
+from pathlib import Path
 
-# Elasticsearch configuration
-ES_HOST = os.getenv('ES_HOST', 'localhost') # localhost is default with http, not https
-ES_PORT = os.getenv('ES_PORT', 9200)
-ES_USER = os.getenv('ES_USER', None)
-ES_PASSWORD = os.getenv('ES_PASSWORD', None)
 
-def create_elasticsearch_client():
-    """Create and return Elasticsearch client."""
-    return Elasticsearch(
-        hosts=[f"http://{ES_HOST}:{ES_PORT}"],
-        http_auth=(ES_USER, ES_PASSWORD) if ES_USER and ES_PASSWORD else None,
-        verify_certs=False
-    )
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-def create_index_from_mapping(es_client, index_name, mapping_file_path):
-    """Create Elasticsearch index from mapping file."""
-    try:
-        with open(mapping_file_path, 'r') as f:
-            mapping = json.load(f)
+from src.flink.es_sink import (
+    ElasticsearchSinkConfig,
+    create_elasticsearch_client,
+    ensure_elasticsearch_indices,
+    setup_elasticsearch_lifecycle,
+)
 
-        if es_client.indices.exists(index=index_name):
-            print(f"Index '{index_name}' already exists. Skipping creation.")
-            return False
 
-        response = es_client.indices.create(index=index_name, body=mapping)
-        print(f"Successfully created index '{index_name}': {response}")
-        return True
+ELASTICSEARCH_DIR = Path(__file__).resolve().parent
+RAW_INDEX_NAME = "stock-raw-ohlcv"
+RAW_MAPPING_PATH = ELASTICSEARCH_DIR / "stock_raw_ohlcv_mapping.json"
 
-    except Exception as e:
-        print(f"Error creating index '{index_name}': {e}")
+
+def create_raw_index_if_missing(es_client) -> bool:
+    """Create the raw OHLCV bootstrap index if it is not present."""
+    if es_client.indices.exists(index=RAW_INDEX_NAME):
+        print(f"Index '{RAW_INDEX_NAME}' already exists. Skipping creation.")
         return False
 
-def main():
-    """Main function to create all stock analysis indices."""
-    es_client = create_elasticsearch_client()
+    with RAW_MAPPING_PATH.open("r", encoding="utf-8") as mapping_file:
+        mapping = json.load(mapping_file)
 
-    # Define index names and their mapping files
-    indices = {
-        'stock-raw-ohlcv': 'src/elasticsearch/stock_raw_ohlcv_mapping.json',
-        'stock-engineered-features': 'src/elasticsearch/stock_engineered_features_mapping.json',
-        'stock-predictions': 'src/elasticsearch/stock_predictions_mapping.json'
-    }
+    es_client.indices.create(index=RAW_INDEX_NAME, body=mapping)
+    print(f"Successfully created index '{RAW_INDEX_NAME}'.")
+    return True
 
-    # Create each index
-    for index_name, mapping_file in indices.items():
-        mapping_path = os.path.join(os.getcwd(), mapping_file)
-        if os.path.exists(mapping_path):
-            create_index_from_mapping(es_client, index_name, mapping_path)
-        else:
-            print(f"Mapping file not found: {mapping_path}")
+
+def main() -> None:
+    """Create stock analysis Elasticsearch indices."""
+    config = ElasticsearchSinkConfig()
+    es_client = create_elasticsearch_client(config)
+
+    create_raw_index_if_missing(es_client)
+    lifecycle = setup_elasticsearch_lifecycle(es_client, config=config)
+    if lifecycle["ilm_enabled"]:
+        print(f"ILM policy '{lifecycle['policy']}' and templates verified.")
+    results = ensure_elasticsearch_indices(es_client, config=config)
+    for index_name, created in results.items():
+        action = "created" if created else "verified"
+        print(f"Index '{index_name}' {action}.")
+
 
 if __name__ == "__main__":
     main()

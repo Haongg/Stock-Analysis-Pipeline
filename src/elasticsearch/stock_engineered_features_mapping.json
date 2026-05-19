@@ -1,7 +1,7 @@
 {
   "settings": {
-    "number_of_shards": 1,
-    "number_of_replicas": 0,
+    "number_of_shards": 3,
+    "number_of_replicas": 1,
     "index.codec": "best_compression",
     "refresh_interval": "30s"
   },
@@ -13,6 +13,13 @@
       },
       "ticker": {
         "type": "keyword"
+      },
+      "type": {
+        "type": "keyword"
+      },
+      "date": {
+        "type": "date",
+        "format": "strict_date_optional_time||yyyy-MM-dd"
       },
       "open": {
         "type": "float"
@@ -64,6 +71,9 @@
       },
       "close_lag_5": {
         "type": "float"
+      },
+      "is_imputed": {
+        "type": "integer"
       },
       "ingested_at": {
         "type": "date",
